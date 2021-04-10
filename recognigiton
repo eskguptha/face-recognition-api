@@ -1,0 +1,135 @@
+class FaceRecognizerAlg:
+    def __init__(self, tenant_code, roll_number, requested_photo, alg_name='All'):
+        self.tenant_code = str(tenant_code)
+        self.roll_number = str(roll_number)
+        self.requested_photo = requested_photo
+        self.user_trained_dir = settings.BASE_DIR + "/media/trained_photos/" + self.tenant_code + "/" + self.roll_number
+        self.user_requested_dir = settings.BASE_DIR + "/media/requested_photos/" 
+        self.RESIZE_FACTOR = 4
+        self.cascPath = settings.BASE_DIR + "/media/haarcascades/haarcascade_frontalface_default.xml"
+        self.face_cascade = cv2.CascadeClassifier(self.cascPath)
+        self.alg_name = alg_name
+        
+
+    def check_lpphface(self, face_resized):
+        try:
+            self.lbphface_model = cv2.face.LBPHFaceRecognizer_create()
+            self.lbphface_model.read(self.user_trained_dir + "/lbphface_trained_data.xml")
+            confidence = self.lbphface_model.predict(face_resized)
+            print (confidence)
+            if confidence[1]< 80:
+                user_id = confidence[0]
+                match_status = True
+            else:
+                user_id = 'Unknown'
+                match_status = False
+        except Exception as e:
+            user_id = 'Unknown'
+            match_status = False
+            pass
+
+        return (user_id, match_status)
+
+    def check_fisherface(self, face_resized):
+        try:
+            self.fisherface_model = cv2.face.FisherFaceRecognizer_create()
+            self.fisherface_model.read(self.user_trained_dir + "/fisherface_trained_data.xml")
+            confidence = self.fisherface_model.predict(face_resized)
+            if confidence[1] < 300:
+                user_id = confidence[0]
+                match_status = True
+            else:
+                user_id = 'Unknown'
+                match_status = False
+        except Exception:
+            user_id = 'Unknown'
+            match_status = False
+            pass
+        return (user_id, match_status)
+    
+    def check_eigenface(self, face_resized):
+        self.eigenface_model = cv2.face.EigenFaceRecognizer_create()
+        self.eigenface_model.read(self.user_trained_dir + "/eigenface_trained_data.xml")
+        confidence = self.eigenface_model.predict(face_resized)
+        if confidence[1] < 3500:
+            user_id = confidence[0]
+            match_status = True
+        else:
+            user_id = 'Unknown'
+            match_status = False
+        return (user_id, match_status)
+
+
+    def process_image(self):
+        image_path = self.user_requested_dir + self.requested_photo
+        image_data = cv2.imread(image_path)
+        resized_width, resized_height = (112, 92)
+        grayscale_image = cv2.cvtColor(image_data, cv2.COLOR_BGR2GRAY)
+        gray_resized = cv2.resize(grayscale_image, (round(grayscale_image.shape[1] / self.RESIZE_FACTOR), round(grayscale_image.shape[0] / self.RESIZE_FACTOR)))
+        faces = self.face_cascade.detectMultiScale(
+                gray_resized,
+                scaleFactor=1.3,
+                minNeighbors=5,
+                minSize=(30, 30),
+                flags=cv2.CASCADE_SCALE_IMAGE
+                )
+        user_id = "Face not detected"
+        match_status = False
+        if len(faces) > 1:
+            return "More than one face detected", False, self.roll_number
+        elif len(faces) == 1 :
+            for i in range(len(faces)):
+                face_i = faces[i]
+                x = face_i[0] * self.RESIZE_FACTOR
+                y = face_i[1] * self.RESIZE_FACTOR
+                w = face_i[2] * self.RESIZE_FACTOR
+                h = face_i[3] * self.RESIZE_FACTOR
+                face = grayscale_image[y:y+h, x:x+w]
+                face_resized = cv2.resize(face, (resized_width, resized_height))
+                saved_img = self.user_requested_dir + 'test_' + self.requested_photo
+                cv2.imwrite(saved_img, face_resized)
+
+                if self.alg_name == 'lbphface':
+                    user_id, match_status = self.check_lpphface(face_resized)
+                elif self.alg_name == 'fisherface':
+                    user_id, match_status = self.check_fisherface(face_resized)
+                elif self.alg_name == 'eigenface':
+                    user_id, match_status = self.check_eigenface(face_resized)
+                elif self.alg_name == 'All':
+                    user_id_list = []
+                    match_status_list = []
+                    
+                    user_id, match_status = self.check_lpphface(face_resized)
+                    user_id_list.append(user_id)
+                    match_status_list.append(match_status)
+
+                    user_id, match_status = self.check_fisherface(face_resized)
+                    user_id_list.append(user_id)
+                    match_status_list.append(match_status)
+
+
+                    user_id, match_status = self.check_eigenface(face_resized)
+                    user_id_list.append(user_id)
+                    match_status_list.append(match_status)
+                    print (match_status_list)
+
+                    match_counter =  Counter(match_status_list)
+
+                    if (match_counter[True] == len(match_status_list)):
+                        try:
+                            f = open(self.user_trained_dir + '/user.txt', 'r')
+                            user_id = str(f.read()).strip()
+                            f.close()
+                        except Exception:
+                            user_id = user_id_list[0]
+                            user_id = str(user_id)[:-1]
+                        return user_id, match_status_list[0], self.roll_number
+                    else:
+                        return "User face not matched", False, self.roll_number
+
+                else:
+                    user_id, match_status = self.check_lpphface(face_resized)
+        else:
+            return "Face not detected", False, self.roll_number
+
+        return user_id, match_status, self.roll_number
